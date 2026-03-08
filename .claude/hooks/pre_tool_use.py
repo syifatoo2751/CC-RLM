@@ -17,6 +17,11 @@ PROJECT_ROOT = Path("/Users/mikewahl/CC-RLM")
 WALKER_DIR = PROJECT_ROOT / "rlm" / "walkers"
 BUDGET_FILE = PROJECT_ROOT / "rlm" / "context_pack.py"
 
+# Paths outside PROJECT_ROOT that are explicitly allowed
+ALLOWED_EXTERNAL = [
+    Path("/Users/mikewahl/.claude/projects/-Users-mikewahl-CC-RLM/memory"),
+]
+
 
 def check(tool_name: str, tool_input: dict) -> str | None:
     """Return an error message to block, or None to allow."""
@@ -28,7 +33,11 @@ def check(tool_name: str, tool_input: dict) -> str | None:
         try:
             path.relative_to(PROJECT_ROOT)
         except ValueError:
-            return f"Blocked: path {path} is outside CC-RLM project root."
+            if not any(
+                path == allowed or path.is_relative_to(allowed)
+                for allowed in ALLOWED_EXTERNAL
+            ):
+                return f"Blocked: path {path} is outside CC-RLM project root."
 
     # Warn if editing a walker — remind about protocol
     if path_str and Path(path_str).is_relative_to(WALKER_DIR):

@@ -6,16 +6,17 @@ Design:
 - Workers run as subprocess pool entries; we exec walker scripts in them.
 - Read-only bind mount in Docker means no risk of walkers mutating the repo.
 - Inside the container, host paths appear under /host (configurable).
+- Walker results are cached by file mtime to avoid redundant subprocess calls.
 """
 
 import asyncio
+import json
 import logging
-import os
-import subprocess
 import sys
 from pathlib import Path
 
 from rlm.config import settings
+from rlm import cache as walker_cache
 
 log = logging.getLogger("rlm.workspace")
 
@@ -62,10 +63,21 @@ async def run_walker(
     """
     Execute a walker as a subprocess and return its JSON output.
 
+    Results are cached by (walker_module, repo_path, file) + file mtime.
+    A cache hit avoids the subprocess entirely — returns in microseconds.
+
     walker_module: dotted module path, e.g. "rlm.walkers.imports"
     kwargs: passed as --key=value CLI args to the walker
     """
     timeout = settings.walker_timeout_ms / 1000.0
+    file_arg = str(kwargs.get("file", ""))
+
+    # Cache lookup (only when a specific file is targeted)
+    if settings.cache_enabled and file_arg:
+        cached = walker_cache.get(walker_module, str(repo_path), file_arg)
+        if cached is not None:
+            log.debug("Cache hit: %s %s", walker_module, Path(file_arg).name)
+            return cached
 
     cmd = [
         sys.executable, "-m", walker_module,
@@ -92,9 +104,14 @@ async def run_walker(
         log.warning("Walker %s exited %d: %s", walker_module, proc.returncode, stderr.decode())
         return {"error": stderr.decode(), "walker": walker_module}
 
-    import json
     try:
-        return json.loads(stdout.decode())
+        result = json.loads(stdout.decode())
     except json.JSONDecodeError as exc:
         log.warning("Walker %s returned invalid JSON: %s", walker_module, exc)
         return {"error": "invalid json", "raw": stdout.decode()[:500]}
+
+    # Store in cache
+    if settings.cache_enabled and file_arg and "error" not in result:
+        walker_cache.set(walker_module, str(repo_path), file_arg, result)
+
+    return result

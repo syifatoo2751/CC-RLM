@@ -4,22 +4,54 @@ RLM Gateway — the REPL brain.
 Single endpoint: POST /context
 Input:  {task, active_file, repo_path}
 Output: {rendered: str, token_count: int, pack: dict}
+
+Also exposes:
+  POST /feedback  — answer-driven relevance scoring (called by CCR after each response)
+  GET  /health    — health + cache + relevance stats
+  DELETE /cache   — clear walker cache
+  DELETE /session — reset session dedup state
 """
 
 import asyncio
 import logging
+from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from rlm.config import settings
 from rlm.context_pack import assemble
+from rlm import bm25 as bm25_module
+from rlm import cache as walker_cache
+from rlm import relevance_store
+from rlm import repo_index
+from rlm import store as sqlite_store
+from rlm import watcher
 from rlm.workspace import mount, run_walker
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("rlm")
 
-app = FastAPI(title="RLM Gateway")
+_TS_EXTENSIONS = {".ts", ".tsx", ".js", ".jsx", ".mts", ".mjs"}
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Open persistent store first — RepoIndex + relevance_store both need it
+    sqlite_store.open_db(Path(settings.store_path))
+    log.info("RLM Gateway started on port %d", settings.port)
+    log.info("  token_budget=%d  walker_timeout=%dms", settings.token_budget, settings.walker_timeout_ms)
+    log.info("  cache=%s  session_dedup=%s  repo_index=%s",
+             settings.cache_enabled, settings.session_dedup_enabled, settings.repo_index_enabled)
+    log.info("  store=%s", sqlite_store.db_stats())
+    yield
+    watcher.stop_all()
+    sqlite_store.close_db()
+    log.info("Walker cache stats on exit: %s", walker_cache.stats())
+
+
+app = FastAPI(title="RLM Gateway", lifespan=lifespan)
 
 
 class ContextRequest(BaseModel):
@@ -34,10 +66,10 @@ class ContextResponse(BaseModel):
     pack: dict
 
 
-@app.on_event("startup")
-async def startup():
-    log.info("RLM Gateway started on port %d", settings.port)
-    log.info("  token_budget=%d  walker_timeout=%dms", settings.token_budget, settings.walker_timeout_ms)
+class FeedbackRequest(BaseModel):
+    repo_path: str
+    files_in_pack: list[str]
+    response_text: str
 
 
 @app.post("/context", response_model=ContextResponse)
@@ -49,12 +81,19 @@ async def build_context(req: ContextRequest) -> ContextResponse:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    log.info("Building context pack for: %s", req.active_file or "(no active file)")
+    active_file = req.active_file
+    log.info("Building context pack for: %s", Path(active_file).name if active_file else "(no active file)")
 
-    # Run walkers concurrently
-    walker_kwargs = {"file": req.active_file} if req.active_file else {}
+    # ------------------------------------------------------------------
+    # Walkers: run concurrently (imports + symbols + diff)
+    # Diff runs first conceptually — its output drives relevance seeding
+    # ------------------------------------------------------------------
+    walker_kwargs = {"file": active_file} if active_file else {}
+    suffix = Path(active_file).suffix if active_file else ""
+    import_walker = "rlm.walkers.ts_imports" if suffix in _TS_EXTENSIONS else "rlm.walkers.imports"
+
     results = await asyncio.gather(
-        run_walker("rlm.walkers.imports", repo, **walker_kwargs),
+        run_walker(import_walker, repo, **walker_kwargs),
         run_walker("rlm.walkers.symbols", repo, **walker_kwargs),
         run_walker("rlm.walkers.diff", repo),
         return_exceptions=False,
@@ -66,12 +105,65 @@ async def build_context(req: ContextRequest) -> ContextResponse:
         "diff":    results[2],
     }
 
+    # ------------------------------------------------------------------
+    # Diff-first relevance: changed files seed the BFS at score 2.0
+    # ------------------------------------------------------------------
+    pre_ranked: list[tuple[str, float]] | None = None
+    if settings.repo_index_enabled and active_file:
+        idx = repo_index.get_or_create(str(repo))
+
+        if not idx.mtimes:
+            log.info("RepoIndex: first request, doing initial scan...")
+            await asyncio.get_event_loop().run_in_executor(None, idx.refresh_repo)
+            # Start file watcher now that we have a full index
+            watcher.start_watching(str(repo))
+            # Build BM25 index from fresh symbol data
+            if settings.bm25_enabled:
+                bm25_idx = bm25_module.get_or_create(str(repo))
+                await asyncio.get_event_loop().run_in_executor(None, bm25_idx.build, idx)
+        else:
+            await asyncio.get_event_loop().run_in_executor(
+                None, idx.refresh_neighborhood, active_file
+            )
+            # Ensure watcher is running (idempotent)
+            watcher.start_watching(str(repo))
+
+        # Resolve diff changed_files to absolute paths
+        diff_data = walker_results.get("diff", {})
+        changed_rel = diff_data.get("changed_files", []) if isinstance(diff_data, dict) else []
+        changed_abs = [str(repo / f) for f in changed_rel if (repo / f).exists()]
+
+        if changed_abs:
+            log.info("Diff-first: seeding from %d changed file(s): %s",
+                     len(changed_abs), [Path(f).name for f in changed_abs])
+            pre_ranked = idx.get_relevant_from_diff(changed_abs, active_file, n=10)
+        else:
+            pre_ranked = idx.get_relevant(active_file, n=10)
+
+        # BM25 fallback when import graph is sparse
+        if settings.bm25_enabled:
+            bm25_idx = bm25_module.get_or_create(str(repo))
+            if bm25_idx._built:
+                pre_ranked = bm25_idx.query_if_sparse(pre_ranked or [], req.task, n=10)
+
+        # Apply learned relevance multipliers
+        if pre_ranked:
+            pre_ranked = [
+                (f, score * relevance_store.get_multiplier(str(repo), f))
+                for f, score in pre_ranked
+            ]
+            pre_ranked.sort(key=lambda x: -x[1])
+
+    # ------------------------------------------------------------------
+    # Assemble context pack
+    # ------------------------------------------------------------------
     pack = assemble(
         task=req.task,
-        active_file=req.active_file,
+        active_file=active_file,
         repo_path=str(repo),
         walker_results=walker_results,
         token_budget=settings.token_budget,
+        relevant_files=pre_ranked,
     )
 
     rendered = pack.render()
@@ -80,15 +172,59 @@ async def build_context(req: ContextRequest) -> ContextResponse:
         token_count=pack.token_count,
         pack={
             "slices": [{"file": s.file, "lines": s.lines} for s in pack.slices],
+            "files_in_pack": [s.file for s in pack.slices],
             "symbol_count": len(pack.symbol_graph),
             "has_diff": bool(pack.recent_diff),
+            "deduped_files": pack.deduped_files,
+            "cache_stats": walker_cache.stats() if settings.cache_enabled else {},
         },
     )
 
 
+@app.post("/feedback")
+async def record_feedback(req: FeedbackRequest):
+    """
+    Answer-driven relevance update.
+
+    Called by CCR after each streamed REPO_TASK response.
+    Parses the response text for cited symbol/file names and updates the
+    relevance store so future context packs are better weighted.
+    """
+    await asyncio.get_event_loop().run_in_executor(
+        None,
+        relevance_store.record,
+        req.repo_path,
+        req.files_in_pack,
+        req.response_text,
+    )
+    return {"ok": True}
+
+
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "cache": walker_cache.stats(),
+        "indexes": list(repo_index._indexes.keys()),
+        "store": sqlite_store.db_stats(),
+        "watchers": list(watcher._observers.keys()),
+    }
+
+
+@app.delete("/cache")
+async def clear_cache(repo_path: str | None = None):
+    cleared = walker_cache.clear(repo_path)
+    return {"cleared": cleared}
+
+
+@app.delete("/session")
+async def reset_session(repo_path: str | None = None):
+    from rlm import session as session_tracker
+    if repo_path:
+        session_tracker.invalidate(repo_path)
+    else:
+        session_tracker._sessions.clear()
+    return {"ok": True}
 
 
 if __name__ == "__main__":

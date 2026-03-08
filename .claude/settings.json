@@ -1,12 +1,33 @@
 {
   "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/homebrew/bin/python3.13 /Users/mikewahl/CC-RLM/.claude/hooks/inject_repo_context.py"
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Write|Edit|MultiEdit",
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /Users/mikewahl/CC-RLM/.claude/hooks/pre_tool_use.py"
+            "command": "/opt/homebrew/bin/python3.13 /Users/mikewahl/CC-RLM/.claude/hooks/pre_tool_use.py"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Read|Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/opt/homebrew/bin/python3.13 /Users/mikewahl/CC-RLM/.claude/hooks/track_tool_reads.py"
           }
         ]
       }

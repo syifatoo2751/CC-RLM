@@ -1,15 +1,28 @@
 # CC-RLM
 
 REPL-based context engine for Claude Code.
-Stack: Claude Code → CCR (proxy) → RLM Gateway (REPL brain) → vLLM → MiniMax-M2.5.
+Stack: Claude Code → CCR (proxy) → RLM Gateway (REPL brain) → Ollama (qwen2.5-coder:7b).
 
 ## What this does
 
 Instead of dumping the whole repo into tokens, the RLM layer:
-1. Mounts the repo as a live workspace
-2. Runs code walkers (AST import graph, symbol extractor, git diff)
-3. Builds a context pack < 8K tokens
-4. Hands it to the model as a precompiled header
+
+1. Maintains a live import graph of the repo (incremental, mtime-aware)
+2. Runs walkers (Python AST, TS/JS regex, git diff) — results cached by mtime
+3. Slices files at symbol level (function/class bodies, not arbitrary line ranges)
+4. Skips files Claude already saw this session if they haven't changed
+5. Hands a < 8K token context pack to the model as a precompiled header
+
+## Prompt-driven routing
+
+Prefix any message to override where it goes:
+
+| Prefix      | Destination                                              |
+| ----------- | -------------------------------------------------------- |
+| `/claude …` | Anthropic API (full Claude reasoning)                    |
+| `/local …`  | Ollama direct, no context enrichment                     |
+| `/repo …`   | Force RLM enrichment                                     |
+| (none)      | Auto: code signal → Ollama+RLM, knowledge Q → Anthropic  |
 
 ## Layout
 
@@ -17,8 +30,9 @@ Instead of dumping the whole repo into tokens, the RLM layer:
 ccr/          proxy — route, auth, fallback         → ccr/CLAUDE.md
 rlm/          REPL brain — walkers, context pack     → rlm/CLAUDE.md
 rlm/walkers/  subprocess walker scripts              → rlm/walkers/CLAUDE.md
+tests/eval/   eval harness — token reduction + recall
 docs/adr/     why decisions were made
-.claude/      skills, hooks
+.claude/      hooks (UserPromptSubmit, PreToolUse)
 ```
 
 ## Key constraints
@@ -26,7 +40,8 @@ docs/adr/     why decisions were made
 - Walker timeout: 500ms each (configurable via RLM_WALKER_TIMEOUT_MS)
 - Context pack hard cap: 8K tokens (configurable via RLM_TOKEN_BUDGET)
 - Walkers are stateless subprocess scripts — they print JSON and exit
-- CCR falls back to Anthropic API when no repo context is present
+- Walker results cached by file mtime; RepoIndex keeps import graph in memory
+- Session dedup: unchanged files skipped on turns 2+ (32% additional savings)
 
 ## Architecture decisions
 

@@ -1,0 +1,26 @@
+[
+  {
+    "id": "classify-function",
+    "task": "What does the classify function do and how does it decide which route to take?",
+    "active_file": "ccr/router.py",
+    "expected_files": ["ccr/router.py", "ccr/config.py"]
+  },
+  {
+    "id": "context-pack-assembly",
+    "task": "How does the context pack get assembled from walker results and how is the token budget enforced?",
+    "active_file": "rlm/context_pack.py",
+    "expected_files": ["rlm/context_pack.py", "rlm/main.py"]
+  },
+  {
+    "id": "walker-dispatch",
+    "task": "How are walkers dispatched and what happens when one times out?",
+    "active_file": "rlm/workspace.py",
+    "expected_files": ["rlm/workspace.py", "rlm/main.py"]
+  },
+  {
+    "id": "hook-state-file",
+    "task": "How does the UserPromptSubmit hook pass repo context to CCR without using headers?",
+    "active_file": ".claude/hooks/inject_repo_context.py",
+    "expected_files": [".claude/hooks/inject_repo_context.py", "ccr/router.py"]
+  }
+]
