@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.13-slim
 
 WORKDIR /app
 
@@ -10,4 +10,5 @@ RUN poetry install --no-root --only main
 
 COPY rlm/ ./rlm/
 
+EXPOSE 8081
 CMD ["uvicorn", "rlm.main:app", "--host", "0.0.0.0", "--port", "8081"]

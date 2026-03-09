@@ -2,7 +2,7 @@
 
 A self-improving context engine that sits between Claude Code and a local LLM. Instead of dumping the whole repo into tokens, CC-RLM maintains a live structural model — import graph, symbol index, diff state, relevance history — and hands the model only what it needs.
 
-**82% token reduction. 88% recall. < 200ms latency.**
+**71% token reduction. 90% recall. < 200ms latency.**
 
 ## How it works
 
@@ -25,7 +25,17 @@ RLM Gateway:
 Model gets exactly what it needs. Nothing else.
 ```
 
-## Quick start
+## Quick start (Docker)
+
+```bash
+docker compose up -d
+export ANTHROPIC_BASE_URL=http://localhost:8080
+claude
+```
+
+That's it. Ollama, RLM, and CCR all start together. The model (`qwen2.5-coder:7b`) is pulled automatically on first run.
+
+## Quick start (local)
 
 ```bash
 # Pull a local model
