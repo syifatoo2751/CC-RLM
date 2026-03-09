@@ -2,7 +2,7 @@
 
 A self-improving context engine that sits between Claude Code and a local LLM. Instead of dumping the whole repo into tokens, CC-RLM maintains a live structural model — import graph, symbol index, diff state, relevance history — and hands the model only what it needs.
 
-**71% token reduction. 90% recall. < 200ms latency.**
+**70–80%+ token reduction. 90% recall. < 200ms latency.**
 
 ## How it works
 
